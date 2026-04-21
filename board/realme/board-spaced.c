@@ -5,14 +5,31 @@
 //
 
 #include <board_ops.h>
+#include <wdt/mtk_wdt.h>
 
 #define VOLUME_UP 17
+#define VOLUME_DOWN 1
 #define CMDLINE1_ADDR 0x4C42E7F8
 #define CMDLINE2_ADDR 0x4C53B3CC
-#define MTK_POWER_OFF 0x4C41C608
 
-void mt_power_off(void) {
-    ((void (*)(void))(MTK_POWER_OFF | 1))();
+static void mt_power_off(void) {
+    ((void (*)(void))(0x4C41C608 | 1))();
+}
+
+static int video_get_rows(void) {
+    return ((int (*)(void))(0x4C43E2C0 | 1))();
+}
+
+static void video_set_cursor(int row, int col) {
+    ((void (*)(int, int))(0x4C43E06C | 1))(row, col);
+}
+
+static void video_clean_screen(void) {
+    ((void (*)(void))(0x4C43E2D8 | 1))();
+}
+
+static void mdelay(unsigned long msecs) {
+    ((void (*)(unsigned long))(0x4C460708 | 1))(msecs);
 }
 
 void cmd_shutdown(const char* arg, void* data, unsigned sz) {
@@ -20,6 +37,77 @@ void cmd_shutdown(const char* arg, void* data, unsigned sz) {
     fastboot_info("Make sure to unplug the USB cable!");
     fastboot_okay("");
     mt_power_off();
+}
+
+
+void update_menu(unsigned int index) {
+    const char* title_msg = "Select Boot Mode:\n[VOLUME_UP to select. VOLUME_DOWN is OK.]\n\n";
+
+    video_set_cursor(video_get_rows()/2,0);
+    video_printf(title_msg);
+    
+    for (int i = 0;i < 4;i++) {
+        switch (i) {
+            case 0:
+                video_printf("[Recovery    Mode]");
+                break;
+            case 1:
+                video_printf("[Fastboot    Mode]");
+                break;
+            case 2:
+                video_printf("[Normal      Mode]");
+                break;
+            case 3:
+                video_printf("[Shutdown        ]");
+            default:
+        }
+        if (i == index) {
+            video_printf("     <<==\n");
+        } else {
+            video_printf("         \n");
+        }
+    }
+}
+
+unsigned int boot_menu_select(void) {
+    mtk_wdt_disable();
+    video_clean_screen();
+    update_menu(0);
+    unsigned int select = 0;
+    while (1) {
+        if (mtk_detect_key(VOLUME_UP))
+        {
+            select = (select + 1) % 4;
+            update_menu(select);
+            mdelay(300);
+        } else if (mtk_detect_key(VOLUME_DOWN)) {
+            break;
+        }
+        mdelay(10);
+    }
+    video_clean_screen();
+    video_set_cursor(video_get_rows()/2,0);
+    return select;
+}
+
+void show_boot_menu(void) {
+    unsigned int select = boot_menu_select();
+    switch (select) {
+        case 0:
+            set_bootmode(BOOTMODE_RECOVERY);
+            break;
+        case 1:
+            set_bootmode(BOOTMODE_FASTBOOT);
+            break;
+        case 2:
+            set_bootmode(BOOTMODE_NORMAL);
+            break;
+        case 3:
+            mt_power_off();
+            break;
+        default:
+        }
+    return;
 }
 
 static void patch_cmdline(char* cmdline) {
@@ -163,12 +251,9 @@ void board_early_init(void) {
     fastboot_register("oem shutdown", cmd_shutdown, 0);
 
     // On a locked bootloader, attempting to boot into fastboot forces the
-    // device to switch to recovery mode. This patch fixes this behavior and also
-    // enables booting into recovery mode by pressing Volume Up.
+    // device to switch to recovery mode. This patch fixes this behavior.
     PATCH_MEM(0x4C403ACC, 0x2363);
-    if (mtk_detect_key(VOLUME_UP)) {
-        set_bootmode(BOOTMODE_RECOVERY);
-    }
+    
 }
 
 void board_late_init(void) {
@@ -205,6 +290,9 @@ void board_late_init(void) {
     //
     // Displaying the boot mode can be helpful for developers, as it provides
     // immediate feedback and can prevent debugging headaches.
+    if (mtk_detect_key(VOLUME_UP)) {
+        show_boot_menu();
+    }
     if (get_bootmode() != BOOTMODE_RECOVERY && get_bootmode() != BOOTMODE_NORMAL) {
         show_bootmode(get_bootmode());
     }
