@@ -5,6 +5,7 @@
 //
 
 #include <board_ops.h>
+#include <lib/thread.h>
 #include <wdt/mtk_wdt.h>
 
 #define VOLUME_UP 17
@@ -32,8 +33,24 @@ static void mdelay(unsigned long msecs) {
     ((void (*)(unsigned long))(0x4C460708 | 1))(msecs);
 }
 
-static void recovery_set_fastboot_cmd(void) {
-    return ((void (*)(void))(0x4C426324 | 1))();
+static void cmd_reboot(void) {
+    ((void (*)(void))(0x4C42DA60 | 1))();
+}
+
+static void cmd_reboot_recovery(void) {
+    ((void (*)(void))(0x4C42D5F8 | 1))();
+}
+
+static void cmd_reboot_fastboot(void) {
+    ((void (*)(void))(0x4C42D5F8 | 1))();
+}
+
+static void cmd_reboot_bootloader(void) {
+    ((void (*)(void))(0x4C42DAAC | 1))();
+}
+
+static void mt_show_logo(void) {
+    ((void (*)(void))(0x4C404C40 | 1))();
 }
 
 void cmd_shutdown(const char* arg, void* data, unsigned sz) {
@@ -88,7 +105,11 @@ void update_menu(unsigned int index) {
 unsigned int boot_menu_select(void) {
     mtk_wdt_disable();
     video_clean_screen();
+    mt_show_logo();
     update_menu(0);
+    video_set_cursor(video_get_rows()-2, 0);
+    show_bootmode(get_bootmode());
+    video_set_cursor(video_get_rows()/2,0);
     unsigned int select = 0;
     while (1) {
         if (mtk_detect_key(VOLUME_UP))
@@ -106,27 +127,26 @@ unsigned int boot_menu_select(void) {
     return select;
 }
 
-void show_boot_menu(void) {
+static int show_boot_menu(void* arg) {
     bool exit = false;
     while (!exit) {
         mdelay(100);
         unsigned int select = boot_menu_select();
         switch (select) {
             case 0:
-                set_bootmode(BOOTMODE_RECOVERY);
+                cmd_reboot_recovery();
                 exit = true;
                 break;
             case 1:
-                set_bootmode(BOOTMODE_FASTBOOT);
+                cmd_reboot_bootloader();
                 exit = true;
                 break;
             case 2:
-                set_bootmode(BOOTMODE_RECOVERY);
-                recovery_set_fastboot_cmd();
+                cmd_reboot_fastboot();
                 exit = true;
                 break;
             case 3:
-                set_bootmode(BOOTMODE_NORMAL);
+                cmd_reboot();
                 exit = true;
                 break;
             case 4:
@@ -139,7 +159,7 @@ void show_boot_menu(void) {
             default:
         }
     }
-    return;
+    return 0;
 }
 
 static void patch_cmdline(char* cmdline) {
@@ -283,9 +303,12 @@ void board_early_init(void) {
     fastboot_register("oem shutdown", cmd_shutdown, 0);
 
     // On a locked bootloader, attempting to boot into fastboot forces the
-    // device to switch to recovery mode. This patch fixes this behavior.
+    // device to switch to recovery mode. This patch fixes this behavior and also
+    // enables booting into recovery mode by pressing Volume Up.
     PATCH_MEM(0x4C403ACC, 0x2363);
-    
+    if (mtk_detect_key(VOLUME_UP)) {
+        set_bootmode(BOOTMODE_FASTBOOT);
+    }
 }
 
 void board_late_init(void) {
@@ -317,14 +340,18 @@ void board_late_init(void) {
         FORCE_RETURN(addr, 0);
     }
 
+    // Show menu only when volume up pressed
+    if (get_bootmode() == BOOTMODE_FASTBOOT && mtk_detect_key(VOLUME_UP)) {
+        thread_t* thr;
+        thr = thread_create("show_boot_menu", show_boot_menu, NULL, LOW_PRIORITY, DEFAULT_STACK_SIZE);
+        if (thr) thread_resume(thr);
+    }
+
     // Show the current boot mode on screen when not performing a normal boot.
     // This is standard behavior in many LK images, but not in this one by default.
     //
     // Displaying the boot mode can be helpful for developers, as it provides
     // immediate feedback and can prevent debugging headaches.
-    if (mtk_detect_key(VOLUME_UP)) {
-        show_boot_menu();
-    }
     if (get_bootmode() != BOOTMODE_RECOVERY && get_bootmode() != BOOTMODE_NORMAL) {
         show_bootmode(get_bootmode());
     }
