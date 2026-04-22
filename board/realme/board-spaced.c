@@ -43,14 +43,20 @@ void cmd_shutdown(const char* arg, void* data, unsigned sz) {
     mt_power_off();
 }
 
+void switch_spoof_status(void) {
+    int new_status = !is_spoofing_enabled();
+    char* g_spoof_status = new_status ? "1" : "0";
+    set_env(KAERU_ENV_BLDR_SPOOF, g_spoof_status);
+}
 
-void update_menu(unsigned int index) {
-    const char* title_msg = "Select Boot Mode:\n[VOLUME_UP to select. VOLUME_DOWN is OK.]\n\n";
-
+void update_menu(unsigned int index) {    
+    const char* env_value = get_env(KAERU_ENV_BLDR_SPOOF);
+    char* status = (env_value && strcmp(env_value, "1") == 0) ? " on" : "off";
+    const char* title_msg = "Select Boot Mode:\n[VOLUME_UP to select. VOLUME_DOWN is OK.]\nLock state spoof: %s\n\n";
     video_set_cursor(video_get_rows()/2,0);
-    video_printf(title_msg);
+    video_printf(title_msg, status);
     
-    for (int i = 0;i < 5;i++) {
+    for (int i = 0;i < 6;i++) {
         switch (i) {
             case 0:
                 video_printf("[Recovery    Mode]");
@@ -66,6 +72,9 @@ void update_menu(unsigned int index) {
                 break;
             case 4:
                 video_printf("[Shutdown        ]");
+                break;
+            case 5:
+                video_printf("[Spoofing  Switch]");
             default:
         }
         if (i == index) {
@@ -84,7 +93,7 @@ unsigned int boot_menu_select(void) {
     while (1) {
         if (mtk_detect_key(VOLUME_UP))
         {
-            select = (select + 1) % 5;
+            select = (select + 1) % 6;
             update_menu(select);
             mdelay(300);
         } else if (mtk_detect_key(VOLUME_DOWN)) {
@@ -98,26 +107,38 @@ unsigned int boot_menu_select(void) {
 }
 
 void show_boot_menu(void) {
-    unsigned int select = boot_menu_select();
-    switch (select) {
-        case 0:
-            set_bootmode(BOOTMODE_RECOVERY);
-            break;
-        case 1:
-            set_bootmode(BOOTMODE_FASTBOOT);
-            break;
-        case 2:
-            set_bootmode(BOOTMODE_RECOVERY);
-            recovery_set_fastboot_cmd();
-            break;
-        case 3:
-            set_bootmode(BOOTMODE_NORMAL);
-            break;
-        case 4:
-            mt_power_off();
-            break;
-        default:
+    bool exit = false;
+    while (!exit) {
+        mdelay(100);
+        unsigned int select = boot_menu_select();
+        switch (select) {
+            case 0:
+                set_bootmode(BOOTMODE_RECOVERY);
+                exit = true;
+                break;
+            case 1:
+                set_bootmode(BOOTMODE_FASTBOOT);
+                exit = true;
+                break;
+            case 2:
+                set_bootmode(BOOTMODE_RECOVERY);
+                recovery_set_fastboot_cmd();
+                exit = true;
+                break;
+            case 3:
+                set_bootmode(BOOTMODE_NORMAL);
+                exit = true;
+                break;
+            case 4:
+                mt_power_off();
+                exit = true;
+                break;
+            case 5:
+                switch_spoof_status();
+                break;
+            default:
         }
+    }
     return;
 }
 
