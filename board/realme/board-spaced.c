@@ -32,6 +32,10 @@ static void mdelay(unsigned long msecs) {
     ((void (*)(unsigned long))(0x4C460708 | 1))(msecs);
 }
 
+static void recovery_set_fastboot_cmd(void) {
+    return ((void (*)(void))(0x4C426324 | 1))();
+}
+
 void cmd_shutdown(const char* arg, void* data, unsigned sz) {
     fastboot_info("The device will power off...");
     fastboot_info("Make sure to unplug the USB cable!");
@@ -46,7 +50,7 @@ void update_menu(unsigned int index) {
     video_set_cursor(video_get_rows()/2,0);
     video_printf(title_msg);
     
-    for (int i = 0;i < 4;i++) {
+    for (int i = 0;i < 5;i++) {
         switch (i) {
             case 0:
                 video_printf("[Recovery    Mode]");
@@ -55,9 +59,12 @@ void update_menu(unsigned int index) {
                 video_printf("[Fastboot    Mode]");
                 break;
             case 2:
-                video_printf("[Normal      Mode]");
+                video_printf("[FastbootD   Mode]");
                 break;
             case 3:
+                video_printf("[Normal      Mode]");
+                break;
+            case 4:
                 video_printf("[Shutdown        ]");
             default:
         }
@@ -77,7 +84,7 @@ unsigned int boot_menu_select(void) {
     while (1) {
         if (mtk_detect_key(VOLUME_UP))
         {
-            select = (select + 1) % 4;
+            select = (select + 1) % 5;
             update_menu(select);
             mdelay(300);
         } else if (mtk_detect_key(VOLUME_DOWN)) {
@@ -100,9 +107,13 @@ void show_boot_menu(void) {
             set_bootmode(BOOTMODE_FASTBOOT);
             break;
         case 2:
-            set_bootmode(BOOTMODE_NORMAL);
+            set_bootmode(BOOTMODE_RECOVERY);
+            recovery_set_fastboot_cmd();
             break;
         case 3:
+            set_bootmode(BOOTMODE_NORMAL);
+            break;
+        case 4:
             mt_power_off();
             break;
         default:
